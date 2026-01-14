@@ -130,6 +130,6 @@ public class NettyServer implements ServerLifeCycle {
 
     @Override
     public boolean isStarted() {
-        return false;
+        return this.started.get();
     }
 }
