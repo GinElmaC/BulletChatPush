@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package com.GinElmaC.domain.protobuf;
+
+option java_package = "com.GinElmaC.domain.protobuf";
+option  java_multiple_files = true;
+
+message PacketHeader{
+  fixed32  app_id = 1; //业务id
+  fixed64 uid = 2; //发送方的uid
+  string token = 3; //用户校验token，16字节
+  int32 compression = 4; //1字节，压缩方式标识，0-不压缩，1-gzip压缩
+  int32 encryption = 5; //1字节，加密方式标识，0-不加密，1-aes加密
+  int32 messageType = 6; //2字节，消息类型，0-客户端登录，1-心跳，2-ack，3-强制下线，4-小直播间，5-大直播间，6-系统飘条消息，7-超管消息，8-礼物消息，9-集群机器连接消息，10-集群机器转发下行消息
+}
+
+message PacketBody{
+  string data = 1; //json数据
+}
+

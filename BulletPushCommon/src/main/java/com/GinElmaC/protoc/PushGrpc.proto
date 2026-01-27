@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+option java_package = "com.GinElmaC.domain.grpc";
+
+service PushService{
+  rpc PushInput (PushRequest) returns (PushResponse);
+
+  rpc BatchPushInput (BatchPushRequest) returns (BatchPushResponse);
+}
+
+//grpc调用请求体(单体)
+message PushRequest{
+  fixed64 fromUserId = 1; //发送方id
+  fixed64 timeStamp = 2; //发送时间戳
+  int32 toType = 3; //目标类型，0-直播间，1-直播间艾特，2-系统
+  fixed64 toId = 4; //目标id
+  int32 messageType = 5; //消息类型，2字节，0-客户端登录，1-心跳，2-ack，3-强制下线，4-小直播间，5-大直播间，6-系统飘条消息，7-超管消息，8-礼物消息，9-集群机器连接消息，10-集群机器转发下行消息
+  string content = 6;
+}
+//grpc调用请求体(批量)
+message BatchPushRequest{
+  fixed64 fromUserId = 1;
+  fixed64 timeStamp = 2;
+  fixed64 toType = 3;
+  fixed64 toIds = 4; //批量接受的id列表
+  int32  messageType = 5;
+  string content = 6; //所有用户接受同一个消息
+}
+//grpc调用返回(单体)
+message PushResponse{
+  bool success = 1; //是否成功标识
+  string msg = 2; //返回信息
+}
+//grpc调用返回，对每个结果单独处理(批量)
+message BatchPushResponse{
+  message Result{
+    fixed64 toId = 1;
+    bool success = 2;
+    string msg = 3;
+  }
+  repeated Result results = 1;
+}
