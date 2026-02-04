@@ -16,4 +16,12 @@ public class CompleteMessage {
         this.header = packetHeader;
         this.body = messageBody;
     }
+
+    public PacketHeader getPacketHeader(){
+        return this.header;
+    }
+
+    public MessageBody getMessageBody(){
+        return this.body;
+    }
 }

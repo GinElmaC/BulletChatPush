@@ -8,8 +8,10 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
 
 /**
  * Proto工具类
@@ -76,4 +78,52 @@ public class ProtoUtil {
             throw new IllegalArgumentException("gzip解压失败",e);
         }
     }
+
+    /**
+     * 压缩
+     * @param dataBytes
+     * @return
+     */
+    public static byte[] compress(byte[] dataBytes) {
+        try {
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            GZIPOutputStream gzip = new GZIPOutputStream(bos);
+            gzip.write(dataBytes);
+            gzip.finish();
+            return bos.toByteArray();
+        } catch (IOException e) {
+            throw new IllegalArgumentException("gzip压缩失败");
+        }
+    }
+
+    /**
+     * 加密
+     * @param dataBytes
+     * @return
+     */
+    public static String doAES(byte[] dataBytes,byte[] key) {
+        try {
+            SecretKeySpec speckey = validateKey(key);
+            byte[] iv = generateIV();
+
+            Cipher cipher = Cipher.getInstance(AES_ALGORITHNM);
+            cipher.init(Cipher.ENCRYPT_MODE,speckey,new IvParameterSpec(iv));
+
+            byte[] encryted = cipher.doFinal(dataBytes);
+            byte[] combined = new byte[iv.length + encryted.length];
+            System.arraycopy(iv,0,combined,0,iv.length);
+            System.arraycopy(encryted,0,combined,iv.length,encryted.length);
+
+            return Base64.getEncoder().encodeToString(combined);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static byte[] generateIV(){
+        byte[] iv = new byte[IV_LENGTH];
+        new SecureRandom().nextBytes(iv);
+        return iv;
+    }
+
 }

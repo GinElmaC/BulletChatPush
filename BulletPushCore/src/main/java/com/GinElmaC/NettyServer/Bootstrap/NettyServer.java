@@ -4,6 +4,7 @@ import com.GinElmaC.NettyServer.Config.LinkConfig;
 import com.GinElmaC.NettyServer.Config.NettyConfig;
 import com.GinElmaC.NettyServer.Config.ServerLifeCycle;
 import com.GinElmaC.NettyServer.Handler.MessageProtocolDecoder;
+import com.GinElmaC.NettyServer.Handler.MessageProtocolEncoder;
 import com.GinElmaC.constant.LinkConfigConstant;
 import com.GinElmaC.redis.RedisClient;
 import com.GinElmaC.utils.SystemUtils;
@@ -81,8 +82,10 @@ public class NettyServer implements ServerLifeCycle {
                     protected void initChannel(SocketChannel socketChannel) throws Exception {
                         socketChannel.pipeline()
                                 //心跳检测
-                                .addLast(new IdleStateHandler(60,0,0, TimeUnit.SECONDS));
+                                .addLast(new IdleStateHandler(60,0,0, TimeUnit.SECONDS))
                                 //TODO 自定义解码器，自定义编码器，自定义业务处理器
+                                .addLast(new MessageProtocolDecoder())
+                                .addLast(new MessageProtocolEncoder());
                     }
                 })
                 // bootstrap 还可以设置tcp参数，根据需要可以分别设置主线程池和从线程池参数，来优化性能
