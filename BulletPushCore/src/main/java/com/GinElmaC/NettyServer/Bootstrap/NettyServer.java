@@ -3,12 +3,16 @@ package com.GinElmaC.NettyServer.Bootstrap;
 import com.GinElmaC.NettyServer.Config.LinkConfig;
 import com.GinElmaC.NettyServer.Config.NettyConfig;
 import com.GinElmaC.NettyServer.Config.ServerLifeCycle;
+import com.GinElmaC.NettyServer.Handler.BulletChatHandler;
 import com.GinElmaC.NettyServer.Handler.MessageProtocolDecoder;
 import com.GinElmaC.NettyServer.Handler.MessageProtocolEncoder;
+import com.GinElmaC.NettyServer.Monitor.NodeMetrics;
 import com.GinElmaC.constant.LinkConfigConstant;
+import com.GinElmaC.log.Log;
+import com.GinElmaC.log.LogFactory;
+import com.GinElmaC.log.LogRuntime;
 import com.GinElmaC.redis.RedisClient;
 import com.GinElmaC.utils.SystemUtils;
-import com.google.rpc.Help;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.*;
 import io.netty.channel.epoll.EpollEventLoopGroup;
@@ -20,9 +24,6 @@ import io.netty.handler.timeout.IdleStateHandler;
 import io.netty.incubator.channel.uring.IOUringEventLoopGroup;
 import io.netty.incubator.channel.uring.IOUringServerSocketChannel;
 import io.netty.util.concurrent.DefaultThreadFactory;
-import lombok.extern.slf4j.Slf4j;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -30,12 +31,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * Netty服务端启动
  */
-@Slf4j
 public class NettyServer implements ServerLifeCycle {
-    private static final Logger log = LoggerFactory.getLogger(NettyServer.class);
+    private static final Log log = LogFactory.getLog(NettyServer.class);
     private ServerBootstrap serverBootstrap;
     private EventLoopGroup bossEventLoopGroup;
     private EventLoopGroup workEventLoopGroup;
+    private Channel serverChannel;
     private static Class<? extends ServerChannel>[] channelClasse = new Class[]{NioServerSocketChannel.class, EpollServerSocketChannel.class, IOUringServerSocketChannel.class};
     //标识服务是否已经启动
     private final AtomicBoolean started = new AtomicBoolean(false);
@@ -44,9 +45,12 @@ public class NettyServer implements ServerLifeCycle {
     @Override
     public void init() {
         //初始化分配机器id
-        LinkConfig.MACHINE_ID = RedisClient.initRedisServerId();
+        if(LinkConfig.MACHINE_ID == null){
+            LinkConfig.MACHINE_ID = RedisClient.initRedisServerId();
+            LogRuntime.setMachineId(LinkConfig.MACHINE_ID);
+        }
         //初始化选择Netty模式
-        log.info("OS_NAME:", SystemUtils.getOsName());
+        log.Info("OS_NAME:{}", SystemUtils.getOsName());
         serverBootstrap = new ServerBootstrap();
         switch(SystemUtils.ChargeMode()){
             case 0:
@@ -68,11 +72,15 @@ public class NettyServer implements ServerLifeCycle {
                         new DefaultThreadFactory("default-netty-worker-IOuring"));
                 break;
         }
-        log.info("EventLoopGroup has inited,mod Num is:",SystemUtils.ChargeMode());
+        log.Info("EventLoopGroup has inited,mod Num is:{}",SystemUtils.ChargeMode());
     }
 
     @Override
     public void start() {
+        if(started.get()){
+            log.Warn("Server start may error!Server is already started!");
+            return;
+        }
         //初始化
         init();
         //配置Netty服务器参数
@@ -85,7 +93,8 @@ public class NettyServer implements ServerLifeCycle {
                                 .addLast(new IdleStateHandler(60,0,0, TimeUnit.SECONDS))
                                 //TODO 自定义解码器，自定义编码器，自定义业务处理器
                                 .addLast(new MessageProtocolDecoder())
-                                .addLast(new MessageProtocolEncoder());
+                                .addLast(new MessageProtocolEncoder())
+                                .addLast(new BulletChatHandler());
                     }
                 })
                 // bootstrap 还可以设置tcp参数，根据需要可以分别设置主线程池和从线程池参数，来优化性能
@@ -101,34 +110,65 @@ public class NettyServer implements ServerLifeCycle {
         //启动Server服务器
         try {
             ChannelFuture channelFuture = serverBootstrap.bind(LinkConfigConstant.LISTENING_PORT).sync();
+            this.serverChannel = channelFuture.channel();
             this.started.compareAndSet(false,true);
-            log.info("Server has [init],Listened Port:{}",LinkConfigConstant.LISTENING_PORT);
+            NodeMetrics.getInstance().markStarted();
+            log.Info("Server has [init],Listened Port:{}",LinkConfigConstant.LISTENING_PORT);
             //等待服务端口关闭
             channelFuture.channel().closeFuture().addListener(f->{
-                shutdown();
-                log.info("Server has shutdown");
+                shutdown(false);
+                log.Info("Server has shutdown");
             });
         } catch (InterruptedException e) {
-            log.info("NettyServer may has error with 109l");
-            log.error("NettyServer has error,message:{}",e.getMessage());
+            Thread.currentThread().interrupt();
+            log.Warn("NettyServer may has error with 109l");
+            log.Error("NettyServer has error,message:{}",e.getMessage(), e);
+        } catch (Exception e) {
+            log.Error("NettyServer start failed,message:{}",e.getMessage(), e);
         }
     }
 
     @Override
     public void shutdown() {
+        shutdown(true);
+    }
+
+    @Override
+    public void restart() {
+        log.Warn("Server restart requested,machineId:{}",LinkConfig.MACHINE_ID);
+        shutdown(true);
+        start();
+    }
+
+    private void shutdown(boolean wait) {
         //未启动处理
-        if(!started.get()){
-            log.info("Server shutdown may error!Server is not started!");
+        if(!started.compareAndSet(true,false)){
+            log.Warn("Server shutdown may error!Server is not started!");
             return;
         }
         //关闭服务器
+        if(serverChannel != null && serverChannel.isOpen()){
+            ChannelFuture channelFuture = serverChannel.close();
+            if(wait){
+                channelFuture.awaitUninterruptibly();
+            }
+        }
         if(bossEventLoopGroup != null){
             //shutdownGracefully是Netty优雅关闭的核心，会确保所有资源都被释放，以及处理完所有请求
-            bossEventLoopGroup.shutdownGracefully();
+            if(wait){
+                bossEventLoopGroup.shutdownGracefully().awaitUninterruptibly();
+            }else {
+                bossEventLoopGroup.shutdownGracefully();
+            }
         }
         if(workEventLoopGroup != null){
-            workEventLoopGroup.shutdownGracefully();
+            if(wait){
+                workEventLoopGroup.shutdownGracefully().awaitUninterruptibly();
+            }else {
+                workEventLoopGroup.shutdownGracefully();
+            }
         }
+        NodeMetrics.getInstance().markStopped();
     }
 
     @Override

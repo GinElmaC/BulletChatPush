@@ -1,0 +1,16 @@
+{
+  "name": "bullet-push-user-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "^5.1.4",
+    "lucide-vue-next": "^0.468.0",
+    "vite": "^5.4.8",
+    "vue": "^3.5.10"
+  },
+  "devDependencies": {}
+}

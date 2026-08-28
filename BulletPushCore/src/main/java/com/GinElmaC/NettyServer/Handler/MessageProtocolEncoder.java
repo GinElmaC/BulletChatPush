@@ -5,22 +5,24 @@ import com.GinElmaC.domain.model.CompleteMessage;
 import com.GinElmaC.domain.model.MessageBody;
 import com.GinElmaC.domain.protobuf.PacketBody;
 import com.GinElmaC.domain.protobuf.PacketHeader;
+import com.GinElmaC.log.Log;
+import com.GinElmaC.log.LogContext;
+import com.GinElmaC.log.LogFactory;
 import com.GinElmaC.utils.JsonUtil;
 import com.GinElmaC.utils.ProtoUtil;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.MessageToByteEncoder;
-import lombok.extern.slf4j.Slf4j;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-@Slf4j
 public class MessageProtocolEncoder extends MessageToByteEncoder<CompleteMessage> {
-    private static final Logger log = LoggerFactory.getLogger(MessageProtocolEncoder.class);
+    private static final Log log = LogFactory.getLog(MessageProtocolEncoder.class);
 
     @Override
     protected void encode(ChannelHandlerContext channelHandlerContext, CompleteMessage completeMessage, ByteBuf out) throws Exception {
-        log.info("发送消息encoder，MessageToByte");
+        LogContext logContext = completeMessage.createLogContext()
+                .put("channelId", channelHandlerContext.channel().id().asShortText())
+                .put("remoteAddress", String.valueOf(channelHandlerContext.channel().remoteAddress()));
+        log.Info(logContext, "MESSAGE_OUTBOUND_ENCODE_STARTED");
 
         //包边界处理
         out.writeShort(ProtoConstant.MAGIC);
@@ -29,6 +31,8 @@ public class MessageProtocolEncoder extends MessageToByteEncoder<CompleteMessage
         //从完整的message中拆出 包头和包体
         PacketHeader packetHeader = completeMessage.getPacketHeader();
         MessageBody messageBody = completeMessage.getMessageBody();
+        // 将当前链路 LogID 写入 JSON 消息体，确保节点间转发后仍可按同一个 LogID 查询。
+        messageBody.setLogId(completeMessage.getOrCreateLogId());
 
         byte[] heardBytes = packetHeader.toByteArray();;
 
@@ -54,10 +58,15 @@ public class MessageProtocolEncoder extends MessageToByteEncoder<CompleteMessage
 
         //序列化包体长度
         out.writeInt(dataBytes.length);
-        log.info("压缩+加密完成");
 
         //序列化包头
         out.writeBytes(heardBytes);
         out.writeBytes(dataBytes);
+        log.Info(logContext
+                        .put("headerLength", heardBytes.length)
+                        .put("dataLength", dataBytes.length)
+                        .put("compression", compression)
+                        .put("encryption", encryption),
+                "MESSAGE_OUTBOUND_ENCODED");
     }
 }

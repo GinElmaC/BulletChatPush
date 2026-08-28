@@ -5,13 +5,15 @@ import com.GinElmaC.domain.model.CompleteMessage;
 import com.GinElmaC.domain.model.MessageBody;
 import com.GinElmaC.domain.protobuf.PacketBody;
 import com.GinElmaC.domain.protobuf.PacketHeader;
+import com.GinElmaC.log.Log;
+import com.GinElmaC.log.LogContext;
+import com.GinElmaC.log.LogFactory;
+import com.GinElmaC.log.LogIdGenerator;
 import com.GinElmaC.utils.JsonUtil;
 import com.GinElmaC.utils.ProtoUtil;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.ByteToMessageDecoder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.List;
 
@@ -20,7 +22,7 @@ import java.util.List;
  */
 public class MessageProtocolDecoder extends ByteToMessageDecoder {
 
-    private static final Logger log = LoggerFactory.getLogger(MessageProtocolDecoder.class);
+    private static final Log log = LogFactory.getLog(MessageProtocolDecoder.class);
 
     /**
      * 这个方法的触发时机可以看我的博客
@@ -76,7 +78,16 @@ public class MessageProtocolDecoder extends ByteToMessageDecoder {
 
         //反序列化，将字节数组转化为java对象，parseFrom方法是由proto自带的
         PacketHeader packetHeader = PacketHeader.parseFrom(headerBytes);
-        log.info("[MessageProtocolDecoder]解析包头：{}",packetHeader);
+        // 旧协议消息没有 LogID 时，由接收节点生成；新协议消息会在消息体解析后复用透传值。
+        String generatedLogId = LogIdGenerator.next();
+        LogContext logContext = LogContext.create()
+                .traceId(generatedLogId)
+                .uid(packetHeader.getUid())
+                .put("channelId", channelHandlerContext.channel().id().asShortText())
+                .put("remoteAddress", String.valueOf(channelHandlerContext.channel().remoteAddress()))
+                .put("messageType", packetHeader.getMessageType())
+                .put("headerLength", headerLength)
+                .put("dataLength", dataLength);
 
         //对dataBytes解密
         if(packetHeader.getEncryption() == 1){
@@ -98,10 +109,23 @@ public class MessageProtocolDecoder extends ByteToMessageDecoder {
         try {
             messageBody = JsonUtil.fromJson(dataJson, MessageBody.class);
         } catch (Exception e) {
+            log.Error(logContext, "MESSAGE_DECODE_FAILED, reason:invalid_message_body", e);
             channelHandlerContext.writeAndFlush("Invalid Json fromat");
+            return;
         }
 
-        list.add(new CompleteMessage(packetHeader,messageBody));
+        String logId = messageBody.getLogId() == null || messageBody.getLogId().isBlank()
+                ? generatedLogId
+                : messageBody.getLogId();
+        CompleteMessage completeMessage = new CompleteMessage(packetHeader, messageBody, logId);
+        LogContext messageLogContext = completeMessage.createLogContext()
+                .put("channelId", channelHandlerContext.channel().id().asShortText())
+                .put("remoteAddress", String.valueOf(channelHandlerContext.channel().remoteAddress()))
+                .put("headerLength", headerLength)
+                .put("dataLength", dataLength)
+                .put("contentLength", messageBody.getContent() == null ? 0 : messageBody.getContent().length());
+        log.Info(messageLogContext, "MESSAGE_DECODED");
+        list.add(completeMessage);
     }
 
 }

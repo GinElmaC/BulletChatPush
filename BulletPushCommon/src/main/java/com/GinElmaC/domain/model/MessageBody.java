@@ -23,4 +23,6 @@ public class MessageBody {
     short messageType;
     //内容
     String content;
+    // 跨节点透传的唯一日志链路 ID，旧消息缺失该字段时由接收节点生成。
+    String logId;
 }

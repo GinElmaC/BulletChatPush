@@ -4,6 +4,8 @@ import com.GinElmaC.constant.LinkConfigConstant;
 import redis.clients.jedis.*;
 
 import java.time.Duration;
+import java.util.List;
+import java.util.Map;
 
 /**
  * redis操作客户端
@@ -47,6 +49,26 @@ public class RedisClient {
      */
     public static String getServerIDKey(){
         return LinkConfigConstant.REDISKEY_SERVERID;
+    }
+
+    /**
+     * 执行 Redis Lua 脚本。
+     * Agent 模型路由通过该接口原子地完成租约回收、熔断校验和并发槽位抢占。
+     */
+    public static Object eval(String script, List<String> keys, List<String> args) {
+        try (Jedis jedis = jedisPool.getResource()) {
+            return jedis.eval(script, keys, args);
+        }
+    }
+
+    /**
+     * 读取 Hash 全量字段。
+     * 用于读取模型实时并发、熔断状态以及分钟桶统计。
+     */
+    public static Map<String, String> hgetAll(String key) {
+        try (Jedis jedis = jedisPool.getResource()) {
+            return jedis.hgetAll(key);
+        }
     }
 
 }

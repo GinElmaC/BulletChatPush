@@ -17,6 +17,10 @@ public interface ServerLifeCycle {
      */
     void shutdown();
     /**
+     * 重启
+     */
+    void restart();
+    /**
      * 判断是否启动
      * @return
      */

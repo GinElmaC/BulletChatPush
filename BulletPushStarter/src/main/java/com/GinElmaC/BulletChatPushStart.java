@@ -1,22 +1,35 @@
 package com.GinElmaC;
 
-import lombok.extern.slf4j.Slf4j;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.GinElmaC.NettyServer.Bootstrap.NettyServer;
+import com.GinElmaC.NettyServer.Bootstrap.WebSocketGatewayServer;
+import com.GinElmaC.log.Log;
+import com.GinElmaC.log.LogFactory;
 
 /**
  * 推送服务启动
  */
-@Slf4j
 public class BulletChatPushStart {
-    private static final Logger log = LoggerFactory.getLogger(BulletChatPushStart.class);
+    private static final Log log = LogFactory.getLog(BulletChatPushStart.class);
 
     public static void main(String[] args) {
-        log.info("BulletChatPush is starting.....");
+        log.Info("BulletChatPush is starting.....");
         //启动Netty服务
+        NettyServer nettyServer = new NettyServer();
+        WebSocketGatewayServer webSocketGatewayServer = new WebSocketGatewayServer();
+        AdminManagementServer adminManagementServer = new AdminManagementServer();
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            adminManagementServer.stop();
+            webSocketGatewayServer.stop();
+            nettyServer.shutdown();
+        }));
+        nettyServer.start();
+        // 启动浏览器 WebSocket Gateway，接收用户上行消息并写入 Kafka。
+        webSocketGatewayServer.start();
+        // 启动管理接口，为前端提供真实节点指标、push_log 查询和日志智能分析。
+        adminManagementServer.start();
         //初始化注册中心
         //启动grpc
 
-        log.info("BulletChatPush has started.....");
+        log.Info("BulletChatPush has started.....");
     }
 }
