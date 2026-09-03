@@ -4,15 +4,16 @@ public class PushLogQuery {
     public static final String INSERT = """
             INSERT INTO push_log (
                 log_time, level, level_name, server_name, machine_id, node_name, host_ip,
-                logger_name, thread_name, trace_id, msg_id, uid, room_id, message, throwable, context_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                logger_name, thread_name, source_file_path, source_line, trace_id, msg_id, uid, room_id,
+                message, throwable, context_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """;
 
     public static final String SELECT_BY_MACHINE_ID_BASE = """
             SELECT
                 id, log_time, level, level_name, server_name, machine_id, node_name, host_ip,
-                logger_name, thread_name, trace_id, msg_id, uid, room_id, message, throwable, context_json,
-                created_at
+                logger_name, thread_name, source_file_path, source_line, trace_id, msg_id, uid, room_id,
+                message, throwable, context_json, created_at
             FROM push_log
             WHERE machine_id = ?
             """;
@@ -23,8 +24,8 @@ public class PushLogQuery {
     public static final String SELECT_BY_LOG_ID_BASE = """
             SELECT
                 id, log_time, level, level_name, server_name, machine_id, node_name, host_ip,
-                logger_name, thread_name, trace_id, msg_id, uid, room_id, message, throwable, context_json,
-                created_at
+                logger_name, thread_name, source_file_path, source_line, trace_id, msg_id, uid, room_id,
+                message, throwable, context_json, created_at
             FROM push_log
             WHERE trace_id = ?
             """;

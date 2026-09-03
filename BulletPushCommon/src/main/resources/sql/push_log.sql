@@ -12,6 +12,8 @@ CREATE TABLE push_log (
 
     logger_name VARCHAR(128) DEFAULT NULL COMMENT '日志所属类或模块',
     thread_name VARCHAR(128) DEFAULT NULL COMMENT '输出日志的线程名',
+    source_file_path VARCHAR(512) DEFAULT NULL COMMENT '触发日志的源码文件路径',
+    source_line INT DEFAULT NULL COMMENT '触发日志的源码行号',
 
     trace_id VARCHAR(64) DEFAULT NULL COMMENT '日志链路LogID/链路追踪ID',
     msg_id VARCHAR(64) DEFAULT NULL COMMENT '消息ID',
@@ -29,5 +31,6 @@ CREATE TABLE push_log (
     KEY idx_level_time (level, log_time),
     KEY idx_trace_id (trace_id),
     KEY idx_msg_id (msg_id),
+    KEY idx_source_location (source_file_path(191), source_line),
     KEY idx_log_time (log_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='推送中台日志表';

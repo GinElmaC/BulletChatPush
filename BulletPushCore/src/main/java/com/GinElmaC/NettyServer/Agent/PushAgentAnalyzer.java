@@ -2,6 +2,8 @@ package com.GinElmaC.NettyServer.Agent;
 
 import com.GinElmaC.NettyServer.Monitor.NodeDetail;
 import com.GinElmaC.NettyServer.Monitor.NodeMetrics;
+import com.GinElmaC.log.Log;
+import com.GinElmaC.log.LogFactory;
 import com.GinElmaC.log.LogLevel;
 import com.GinElmaC.log.PushLogRecord;
 import com.GinElmaC.log.PushLogRepository;
@@ -18,6 +20,7 @@ import java.util.function.Consumer;
  * 负责收集节点详情和日志、执行规则预分析、路由模型，并维护模型请求的完整生命周期。
  */
 public class PushAgentAnalyzer {
+    private static final Log log = LogFactory.getLog(PushAgentAnalyzer.class);
     private final RuleAnalyzer ruleAnalyzer = new RuleAnalyzer();
     private final LlmAnalyzeClient llmAnalyzeClient = new LlmAnalyzeClient();
     private final PushLogRepository pushLogRepository = new PushLogRepository();
@@ -48,30 +51,56 @@ public class PushAgentAnalyzer {
     }
 
     public AgentAnalysisResult analyze(NodeDetail nodeDetail, List<PushLogRecord> logs, String requestedModel) {
+        AgentTraceContext traceContext = AgentTraceContext.forNodeAnalysis(
+                nodeDetail == null ? null : nodeDetail.getMachineId()
+        );
+        log.Info(traceContext.logContext().put("requestedModel", requestedModel),
+                "AGENT_NODE_ANALYSIS_STARTED");
         AgentAnalysisResult result;
         try {
             result = ruleAnalyzer.analyze(nodeDetail, logs);
         } catch (Exception e) {
+            log.Error(traceContext.logContext().put("errorType", e.getClass().getSimpleName()),
+                    "AGENT_NODE_RULE_ANALYSIS_FAILED",
+                    e);
             return AgentAnalysisResult.serviceAnalyzeFailed();
         }
         AgentModelLease lease;
         try {
             lease = autoModelRouter.acquire(requestedModel);
         } catch (Exception e) {
+            log.Error(traceContext.logContext().put("errorType", e.getClass().getSimpleName()),
+                    "AGENT_MODEL_LEASE_FAILED",
+                    e);
             return AgentAnalysisResult.serviceAnalyzeFailed();
         }
         try {
             result.setModelName(lease.model().name());
-            String summary = llmAnalyzeClient.analyze(lease.model(), buildPrompt(nodeDetail, logs, result));
+            log.Info(traceContext.logContext().put("modelName", lease.model().name()),
+                    "AGENT_MODEL_LEASE_ACQUIRED");
+            String summary = llmAnalyzeClient.analyze(
+                    lease.model(),
+                    buildPrompt(nodeDetail, logs, result),
+                    traceContext
+            );
             if (summary == null || summary.isBlank()) {
                 markFailed(lease);
+                log.Warn(traceContext.logContext().put("modelName", lease.model().name()),
+                        "AGENT_LLM_EMPTY_RESPONSE");
                 return AgentAnalysisResult.serviceAnalyzeFailed();
             }
             result.setLlmSummary(summary);
             // 非流式请求没有单独的首 Token 事件，以响应完成时间作为保守估算。
             autoModelRouter.complete(lease, System.currentTimeMillis());
+            log.Info(traceContext.logContext()
+                            .put("modelName", lease.model().name())
+                            .put("summaryLength", summary.length()),
+                    "AGENT_NODE_ANALYSIS_COMPLETED");
         } catch (Exception e) {
             markFailed(lease);
+            log.Error(traceContext.logContext().put("errorType", e.getClass().getSimpleName()),
+                    "AGENT_NODE_ANALYSIS_FAILED",
+                    e);
             return AgentAnalysisResult.serviceAnalyzeFailed();
         }
         return result;
@@ -139,10 +168,18 @@ public class PushAgentAnalyzer {
      * 通过显式失败事件支持 SSE/WebSocket 清空已发送草稿，避免服务异常时展示分析内容。
      */
     public void analyzeStream(NodeDetail nodeDetail, List<PushLogRecord> logs, String requestedModel, AgentStreamObserver observer) {
+        AgentTraceContext traceContext = AgentTraceContext.forNodeAnalysis(
+                nodeDetail == null ? null : nodeDetail.getMachineId()
+        );
+        log.Info(traceContext.logContext().put("requestedModel", requestedModel),
+                "AGENT_NODE_STREAM_ANALYSIS_STARTED");
         AgentAnalysisResult result;
         try {
             result = ruleAnalyzer.analyze(nodeDetail, logs);
         } catch (Exception e) {
+            log.Error(traceContext.logContext().put("errorType", e.getClass().getSimpleName()),
+                    "AGENT_NODE_RULE_ANALYSIS_FAILED",
+                    e);
             observer.onFailed();
             return;
         }
@@ -150,25 +187,44 @@ public class PushAgentAnalyzer {
         try {
             lease = autoModelRouter.acquire(requestedModel);
         } catch (Exception e) {
+            log.Error(traceContext.logContext().put("errorType", e.getClass().getSimpleName()),
+                    "AGENT_MODEL_LEASE_FAILED",
+                    e);
             observer.onFailed();
             return;
         }
         result.setModelName(lease.model().name());
+        log.Info(traceContext.logContext().put("modelName", lease.model().name()),
+                "AGENT_MODEL_LEASE_ACQUIRED");
         AtomicLong firstTokenAtMillis = new AtomicLong();
         try {
-            llmAnalyzeClient.analyzeStream(lease.model(), buildPrompt(nodeDetail, logs, result), chunk -> {
-                // 首 Token 延迟从模型实际输出第一个内容片段开始计算，而不是 HTTP 连接建立时间。
-                firstTokenAtMillis.compareAndSet(0, System.currentTimeMillis());
-                observer.onChunk(chunk);
-            });
+            llmAnalyzeClient.analyzeStream(
+                    lease.model(),
+                    buildPrompt(nodeDetail, logs, result),
+                    traceContext,
+                    chunk -> {
+                        // 首 Token 延迟从模型实际输出第一个内容片段开始计算，而不是 HTTP 连接建立时间。
+                        firstTokenAtMillis.compareAndSet(0, System.currentTimeMillis());
+                        observer.onChunk(chunk);
+                    }
+            );
             if (firstTokenAtMillis.get() == 0) {
                 markFailed(lease);
+                log.Warn(traceContext.logContext().put("modelName", lease.model().name()),
+                        "AGENT_LLM_EMPTY_RESPONSE");
                 observer.onFailed();
                 return;
             }
             autoModelRouter.complete(lease, firstTokenAtMillis.get());
+            log.Info(traceContext.logContext()
+                            .put("modelName", lease.model().name())
+                            .put("firstTokenAtMillis", firstTokenAtMillis.get()),
+                    "AGENT_NODE_STREAM_ANALYSIS_COMPLETED");
         } catch (Exception e) {
             markFailed(lease);
+            log.Error(traceContext.logContext().put("errorType", e.getClass().getSimpleName()),
+                    "AGENT_NODE_STREAM_ANALYSIS_FAILED",
+                    e);
             observer.onFailed();
         }
     }

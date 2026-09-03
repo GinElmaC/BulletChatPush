@@ -90,21 +90,27 @@ public class PushLogWriter {
         statement.setString(7, event.getHostIp());
         statement.setString(8, event.getLoggerName());
         statement.setString(9, event.getThreadName());
-        statement.setString(10, event.getTraceId());
-        statement.setString(11, event.getMsgId());
-        if (event.getUid() == null) {
-            statement.setObject(12, null);
+        statement.setString(10, event.getSourceFilePath());
+        if (event.getSourceLine() == null) {
+            statement.setObject(11, null);
         } else {
-            statement.setLong(12, event.getUid());
+            statement.setInt(11, event.getSourceLine());
+        }
+        statement.setString(12, event.getTraceId());
+        statement.setString(13, event.getMsgId());
+        if (event.getUid() == null) {
+            statement.setObject(14, null);
+        } else {
+            statement.setLong(14, event.getUid());
         }
         if (event.getRoomId() == null) {
-            statement.setObject(13, null);
+            statement.setObject(15, null);
         } else {
-            statement.setLong(13, event.getRoomId());
+            statement.setLong(15, event.getRoomId());
         }
-        statement.setString(14, event.getMessage());
-        statement.setString(15, event.getThrowable());
-        statement.setString(16, event.getContextJson());
+        statement.setString(16, event.getMessage());
+        statement.setString(17, event.getThrowable());
+        statement.setString(18, event.getContextJson());
     }
 
     private void shutdown() {

@@ -95,15 +95,71 @@ LogAnalysisResult result = agent.analyze(logId);
 
 处理流程：
 
-1. Agent 只向模型发送 LogID 和 `query_push_logs_by_log_id` 工具定义。
-2. 第一轮模型被要求调用该工具。
+1. Agent 至少向模型发送 `query_push_logs_by_log_id` 工具定义；如果开启 MCP，也会追加远端 MCP 工具。
+2. 第一轮模型被要求调用工具，且必须包含 `query_push_logs_by_log_id`。
 3. 工具固定通过 `PushLogRepository.queryByLogId(...)` 查询 `push_log.trace_id`。
-4. 工具结果以 `role=tool` 回填给模型。
+4. 本地工具和 MCP 工具结果都以 `role=tool` 回填给模型。
 5. 第二轮模型仅输出日志分析结论。
 
 工具不接收 SQL、表名或任意 Redis Key。模型传入的 LogID 必须与前端请求的 LogID 一致，实际查询也始终使用该请求值。
 
-当前工具注册表在 `AgentToolRegistry` 中；后续需要提供 MCP Server 时，可直接将 `AgentToolDefinition` 映射为 MCP `tools/list`，并将 `AgentTool#execute` 映射为 `tools/call`。
+当前工具注册表在 `AgentToolRegistry` 中，统一通过 `AgentToolGateway` 执行。
+
+## 流式 Agent Runner
+
+会话型排障助手使用 `BulletAgentRunner` 收敛流式模型轮次：
+
+1. 每轮通过 OpenAI-compatible SSE 调用模型。
+2. `LlmAnalyzeClient` 聚合本轮 `delta.content` 与分片 `delta.tool_calls`。
+3. 如果本轮包含工具调用，Runner 先执行 `AgentToolRegistry` 中的工具，把 `role=tool` 结果回填后继续下一轮。
+4. 如果本轮没有工具调用，Runner 将该轮完整文本作为最终回答下发并结束。
+5. 超过 5 轮工具循环直接失败，避免模型重复调用工具导致会话卡死。
+
+会话流的业务结束条件是“模型 SSE 一轮结束，且这一轮没有聚合出工具调用”。底层 `[DONE]` 只代表当前模型请求的 SSE 结束；如果这一轮包含工具调用，Runner 会继续发起下一轮模型请求。
+
+## MCP 配置
+
+当前已支持两类 MCP 能力：
+
+1. 当前节点通过 `/mcp` 暴露自己的只读诊断工具，支持 JSON-RPC `initialize`、`ping`、`tools/list` 和 `tools/call`。
+2. LogID 分析 Agent 可加载外部 HTTP JSON-RPC MCP Server 的 `tools/list` 结果，并通过 `tools/call` 调用远端工具。
+
+本节点工具发现示例：
+
+```bash
+curl -s http://127.0.0.1:9090/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":"1","method":"tools/list","params":{}}'
+```
+
+调用本地 LogID 工具示例：
+
+```bash
+curl -s http://127.0.0.1:9090/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":"2","method":"tools/call","params":{"name":"query_push_logs_by_log_id","arguments":{"logId":"System_20260902200530068","limit":20}}}'
+```
+
+外部 MCP 默认关闭，按需在 `config/local.properties` 中启用：
+
+```properties
+agent.mcp.enabled=true
+agent.mcp.servers=diagnosis
+agent.mcp.diagnosis.transport=http-jsonrpc
+agent.mcp.diagnosis.endpoint=http://127.0.0.1:7001/mcp
+agent.mcp.diagnosis.timeout.ms=15000
+agent.mcp.result.max.length=16000
+```
+
+也支持对应环境变量：
+
+```bash
+PUSH_AGENT_MCP_ENABLED=true
+PUSH_AGENT_MCP_SERVERS=diagnosis
+PUSH_AGENT_MCP_DIAGNOSIS_ENDPOINT=http://127.0.0.1:7001/mcp
+```
+
+远端工具会以 `mcp_{serverName}_{toolName}` 的函数名暴露给模型，避免和本地工具重名。第一版只支持 HTTP JSON-RPC 形态；stdio 以及标准 SSE 长连接传输尚未接入。
 
 ## 阈值配置
 

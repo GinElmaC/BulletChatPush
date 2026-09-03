@@ -13,6 +13,8 @@ public class PushLogRecord {
     private String hostIp;
     private String loggerName;
     private String threadName;
+    private String sourceFilePath;
+    private Integer sourceLine;
     private String traceId;
     private String msgId;
     private Long uid;
@@ -100,6 +102,22 @@ public class PushLogRecord {
 
     public void setThreadName(String threadName) {
         this.threadName = threadName;
+    }
+
+    public String getSourceFilePath() {
+        return sourceFilePath;
+    }
+
+    public void setSourceFilePath(String sourceFilePath) {
+        this.sourceFilePath = sourceFilePath;
+    }
+
+    public Integer getSourceLine() {
+        return sourceLine;
+    }
+
+    public void setSourceLine(Integer sourceLine) {
+        this.sourceLine = sourceLine;
     }
 
     public String getTraceId() {

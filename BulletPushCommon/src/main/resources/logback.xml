@@ -1,0 +1,15 @@
+<configuration>
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%level] [%thread] %logger - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Kafka 与 Netty 的协议轮询日志量极大，仅保留告警；业务链路日志仍由项目自研 Log 输出。 -->
+    <logger name="org.apache.kafka" level="WARN"/>
+    <logger name="io.netty" level="WARN"/>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>

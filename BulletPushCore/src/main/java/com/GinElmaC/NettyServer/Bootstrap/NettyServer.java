@@ -7,6 +7,7 @@ import com.GinElmaC.NettyServer.Handler.BulletChatHandler;
 import com.GinElmaC.NettyServer.Handler.MessageProtocolDecoder;
 import com.GinElmaC.NettyServer.Handler.MessageProtocolEncoder;
 import com.GinElmaC.NettyServer.Monitor.NodeMetrics;
+import com.GinElmaC.NettyServer.Monitor.NodeRegistryService;
 import com.GinElmaC.constant.LinkConfigConstant;
 import com.GinElmaC.log.Log;
 import com.GinElmaC.log.LogFactory;
@@ -37,6 +38,7 @@ public class NettyServer implements ServerLifeCycle {
     private EventLoopGroup bossEventLoopGroup;
     private EventLoopGroup workEventLoopGroup;
     private Channel serverChannel;
+    private final NodeRegistryService nodeRegistryService = new NodeRegistryService();
     private static Class<? extends ServerChannel>[] channelClasse = new Class[]{NioServerSocketChannel.class, EpollServerSocketChannel.class, IOUringServerSocketChannel.class};
     //标识服务是否已经启动
     private final AtomicBoolean started = new AtomicBoolean(false);
@@ -113,6 +115,7 @@ public class NettyServer implements ServerLifeCycle {
             this.serverChannel = channelFuture.channel();
             this.started.compareAndSet(false,true);
             NodeMetrics.getInstance().markStarted();
+            nodeRegistryService.start();
             log.Info("Server has [init],Listened Port:{}",LinkConfigConstant.LISTENING_PORT);
             //等待服务端口关闭
             channelFuture.channel().closeFuture().addListener(f->{
@@ -169,6 +172,7 @@ public class NettyServer implements ServerLifeCycle {
             }
         }
         NodeMetrics.getInstance().markStopped();
+        nodeRegistryService.stop();
     }
 
     @Override

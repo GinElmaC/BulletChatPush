@@ -18,7 +18,7 @@ import {
 const navItems = ['概览', '节点管理', '消息监控', '连接管理', '日志中心', '系统设置'];
 const apiBaseUrl = import.meta.env.VITE_PUSH_ADMIN_API_BASE_URL || 'http://localhost:9090/admin/api';
 const nodes = ref([]);
-const logCenterResults = ref([]);
+const logCenterRecords = ref([]);
 const expandedLogIds = ref([]);
 const apiError = ref('');
 
@@ -43,6 +43,11 @@ const agentModelMode = ref('auto');
 // 当前实际使用模型，Auto 模式会展示后端路由结果。
 const agentModelName = ref('Auto');
 const agentMessages = ref([]);
+const agentConversationId = ref('');
+const agentScopeType = ref('');
+const agentScopeMachineIds = ref([]);
+const agentScopeLogId = ref('');
+const agentInput = ref('');
 const logLevelFilter = ref('all');
 const logQueryMode = ref('logId');
 const logIdQuery = ref('');
@@ -50,6 +55,7 @@ const machineIdQuery = ref('');
 const logSearchKeyword = ref('');
 const refreshing = ref(false);
 let refreshTimer;
+let agentRequestController;
 
 const filteredNodes = computed(() => {
   const query = keyword.value.trim().toLowerCase();
@@ -144,7 +150,7 @@ async function searchLogs() {
     ? logIdQuery.value.trim()
     : machineIdQuery.value.trim();
   if (!target) {
-    logCenterResults.value = [];
+    logCenterRecords.value = [];
     return;
   }
   const params = new URLSearchParams({
@@ -156,9 +162,9 @@ async function searchLogs() {
   params.set(logQueryMode.value, target);
   try {
     const records = await apiGet(`/logs?${params.toString()}`);
-    logCenterResults.value = records;
+    logCenterRecords.value = records;
   } catch (error) {
-    logCenterResults.value = [];
+    logCenterRecords.value = [];
     apiError.value = '查询日志失败';
   }
 }
@@ -176,21 +182,18 @@ function toggleLogDetail(logId) {
     : [...expandedLogIds.value, logId];
 }
 
-function analyzeLogCenter() {
+async function analyzeLogCenter() {
   if (logQueryMode.value !== 'logId' || !logIdQuery.value.trim()) {
-    openAgentPanel(
-      `[LogID] 请先输入唯一 LogID 后再发起日志智能分析。`,
-      [],
-      Promise.resolve({ analysis: '服务分析失败' })
-    );
+    openAgentGuide('请先输入唯一 LogID 后再发起日志智能分析。');
     return;
   }
   const logId = logIdQuery.value.trim();
-  openAgentPanel(
-    `[logId=${logId}] [模型=${selectedModel()}] 请分析该日志链路。`,
-    [],
-    apiGet(`/log-analysis?${new URLSearchParams({ logId, model: agentModelMode.value }).toString()}`)
-  );
+  await startAgentConversation({
+    scopeType: 'log',
+    machineIds: [],
+    logId,
+    prompt: `[logId=${logId}] [模型=${selectedModel()}] 请分析该日志链路。`
+  });
 }
 
 function openDetail(node) {
@@ -207,62 +210,260 @@ function openClusterAnalysis() {
   openNodeAnalysis();
 }
 
-function openNodeAnalysis() {
-  openAgentPanel(
-    `[machineId=${nodes.value.map((node) => node.machineId).join(',')}] [模型=${selectedModel()}] 请分析当前节点状态。`,
-    nodes.value.map((node) => node.machineId),
-    apiGet(`/node-analysis?${new URLSearchParams({ model: agentModelMode.value }).toString()}`)
-  );
+async function openNodeAnalysis(node) {
+  const machineIds = node?.machineId != null
+    ? [node.machineId]
+    : nodes.value.map((node) => node.machineId);
+  await startAgentConversation({
+    scopeType: 'node',
+    machineIds,
+    logId: '',
+    prompt: `[machineId=${machineIds.join(',')}] [模型=${selectedModel()}] 请分析当前节点状态。`
+  });
 }
 
 function closeAnalysis() {
+  stopAgentRequest();
   agentPanelOpen.value = false;
   stopAgentTimers();
 }
 
-function openAgentPanel(prompt, machineIds, request) {
+function openAgentGuide(content) {
+  stopAgentRequest();
   stopAgentTimers();
   agentPanelOpen.value = true;
-  agentRunning.value = true;
+  agentRunning.value = false;
   agentThinkingSeconds.value = 0;
   agentModelName.value = selectedModel();
+  agentConversationId.value = '';
+  agentScopeType.value = '';
+  agentScopeMachineIds.value = [];
+  agentScopeLogId.value = '';
+  agentInput.value = '';
+  agentMessages.value = [
+    {
+      role: 'assistant',
+      machineIds: [],
+      logId: '',
+      model: selectedModel(),
+      content,
+      streaming: false
+    }
+  ];
+}
+
+function showAgentFailure(prompt, machineIds, logId) {
   agentMessages.value = [
     {
       role: 'user',
       machineIds,
+      logId,
       model: selectedModel(),
-      content: prompt
+      content: prompt,
+      streaming: false
     },
     {
       role: 'assistant',
       machineIds,
-      model: '',
-      content: '',
+      logId,
+      model: selectedModel(),
+      content: '服务分析失败',
       streaming: false
     }
   ];
+}
 
+async function startAgentConversation({ scopeType, machineIds, logId, prompt }) {
+  stopAgentRequest();
+  stopAgentTimers();
+  agentPanelOpen.value = true;
+  agentRunning.value = false;
+  agentThinkingSeconds.value = 0;
+  agentModelName.value = selectedModel();
+  agentConversationId.value = '';
+  agentScopeType.value = scopeType;
+  agentScopeMachineIds.value = machineIds;
+  agentScopeLogId.value = logId;
+  agentInput.value = '';
+  agentMessages.value = [];
+  try {
+    const session = await apiPost('/agent/session/start', {
+      scopeType,
+      machineIds,
+      logId,
+      model: agentModelMode.value
+    });
+    agentConversationId.value = session.conversationId;
+    agentModelName.value = session.model || selectedModel();
+    // Redis 恢复会话时优先展示最近十轮可见历史，避免再次发送重复的初始分析请求。
+    agentMessages.value = (session.turns || []).flatMap((turn) => [
+      {
+        role: 'user',
+        machineIds,
+        logId,
+        model: turn.model || agentModelName.value,
+        content: turn.userMessage,
+        streaming: false
+      },
+      {
+        role: 'assistant',
+        machineIds,
+        logId,
+        model: turn.model || agentModelName.value,
+        content: turn.assistantMessage,
+        steps: [],
+        stepsCollapsed: true,
+        streaming: false
+      }
+    ]);
+    if (!session.resumed) {
+      await sendAgentMessage(prompt);
+    }
+  } catch (error) {
+    showAgentFailure(prompt, machineIds, logId);
+  }
+}
+
+function startAgentThinkingTimer() {
   agentThinkingTimer = window.setInterval(() => {
     agentThinkingSeconds.value += 1;
   }, 1000);
+}
 
-  request
-    .then((result) => {
-      const assistantMessage = agentMessages.value[agentMessages.value.length - 1];
-      assistantMessage.model = result.modelName || selectedModel();
-      assistantMessage.content = result.analysis || result.llmSummary || result.conclusion || '服务分析失败';
-      assistantMessage.streaming = false;
-      agentModelName.value = result.modelName || selectedModel();
-    })
-    .catch(() => {
-      const assistantMessage = agentMessages.value[agentMessages.value.length - 1];
+async function sendAgentInput() {
+  const content = agentInput.value.trim();
+  if (!content) {
+    return;
+  }
+  agentInput.value = '';
+  await sendAgentMessage(content);
+}
+
+async function sendAgentMessage(content) {
+  if (!agentConversationId.value || !content || agentRunning.value) {
+    return;
+  }
+  stopAgentRequest();
+  stopAgentTimers();
+  agentRunning.value = true;
+  agentThinkingSeconds.value = 0;
+  const machineIds = [...agentScopeMachineIds.value];
+  const logId = agentScopeLogId.value;
+  const assistantMessage = {
+    role: 'assistant',
+    machineIds,
+    logId,
+    model: agentModelName.value,
+    content: '',
+    steps: [],
+    stepsCollapsed: false,
+    streaming: true
+  };
+  agentMessages.value.push({
+    role: 'user',
+    machineIds,
+    logId,
+    model: selectedModel(),
+    content,
+    streaming: false
+  });
+  agentMessages.value.push(assistantMessage);
+  startAgentThinkingTimer();
+  const controller = new AbortController();
+  agentRequestController = controller;
+  try {
+    const result = await apiPostSse(
+      '/agent/session/chat',
+      {
+        conversationId: agentConversationId.value,
+        message: content
+      },
+      {
+        signal: controller.signal,
+        onMeta(payload) {
+          const modelName = payload.modelName || selectedModel();
+          assistantMessage.model = modelName;
+          agentModelName.value = modelName;
+        },
+        onStage(payload) {
+          upsertAgentStep(assistantMessage, payload);
+        },
+        onChunk(payload) {
+          assistantMessage.content += payload.content || '';
+        },
+        onFailed(payload) {
+          assistantMessage.stepsCollapsed = true;
+          assistantMessage.content = payload.content || '服务分析失败';
+        },
+        onDone() {
+          assistantMessage.stepsCollapsed = true;
+        }
+      }
+    );
+    if (result.failed && !assistantMessage.content) {
       assistantMessage.content = '服务分析失败';
-      assistantMessage.streaming = false;
-    })
-    .finally(() => {
-      agentRunning.value = false;
-      stopAgentTimers(false);
-    });
+    }
+  } catch (error) {
+    if (error?.name !== 'AbortError') {
+      assistantMessage.content = assistantMessage.content || '服务分析失败';
+    }
+  } finally {
+    if (agentRequestController === controller) {
+      agentRequestController = null;
+    }
+    assistantMessage.streaming = false;
+    assistantMessage.stepsCollapsed = true;
+    agentRunning.value = false;
+    stopAgentTimers(false);
+  }
+}
+
+function upsertAgentStep(message, payload) {
+  const title = payload.title || '正在执行任务';
+  const status = payload.status || 'running';
+  const detail = payload.detail || '';
+  const existed = message.steps.find((step) => step.title === title);
+  if (existed) {
+    existed.status = status;
+    existed.detail = detail;
+    return;
+  }
+  message.steps.push({
+    title,
+    status,
+    detail
+  });
+}
+
+function toggleAgentSteps(message) {
+  message.stepsCollapsed = !message.stepsCollapsed;
+}
+
+function agentStepsTitle(message) {
+  if (message.steps?.some((step) => step.status === 'running')) {
+    return '正在执行任务';
+  }
+  if (message.steps?.some((step) => step.status === 'failed')) {
+    return '任务执行失败';
+  }
+  return '任务执行完成';
+}
+
+function agentStepStatusText(status) {
+  if (status === 'completed') {
+    return '完成';
+  }
+  if (status === 'failed') {
+    return '失败';
+  }
+  return '执行中';
+}
+
+function stopAgentRequest() {
+  if (agentRequestController) {
+    agentRequestController.abort();
+    agentRequestController = null;
+  }
 }
 
 function stopAgentTimers(clearRunning = true) {
@@ -276,12 +477,141 @@ function selectedModel() {
   return agentModelMode.value === 'auto' ? 'Auto' : 'deepseek-flash';
 }
 
+function agentScopeLabel(message) {
+  if (message.logId) {
+    return `logId=${message.logId} · ${message.model}`;
+  }
+  if (message.machineIds?.length) {
+    return `machineId=${message.machineIds.join(',')} · ${message.model}`;
+  }
+  return message.model || '-';
+}
+
+function agentInputPlaceholder() {
+  if (!agentConversationId.value) {
+    return '请先发起一次智能分析会话';
+  }
+  return agentScopeType.value === 'log'
+    ? '继续追问当前 LogID 日志链路'
+    : '继续追问当前节点状态';
+}
+
 async function apiGet(path) {
   const response = await fetch(`${apiBaseUrl}${path}`);
   if (!response.ok) {
     throw new Error('api request failed');
   }
   return response.json();
+}
+
+async function apiPost(path, payload) {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) {
+    throw new Error('api request failed');
+  }
+  return response.json();
+}
+
+async function apiPostSse(path, payload, { signal, onMeta, onStage, onChunk, onFailed, onDone }) {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload),
+    signal
+  });
+  if (!response.ok || !response.body) {
+    throw new Error('api request failed');
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let failed = false;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (value) {
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+      buffer = consumeSseBuffer(buffer, {
+        onMeta,
+        onStage,
+        onChunk,
+        onFailed(payload) {
+          failed = true;
+          onFailed?.(payload);
+        },
+        onDone
+      });
+    }
+    if (done) {
+      buffer += decoder.decode().replace(/\r\n/g, '\n');
+      consumeSseBuffer(buffer, {
+        onMeta,
+        onStage,
+        onChunk,
+        onFailed(payload) {
+          failed = true;
+          onFailed?.(payload);
+        },
+        onDone
+      });
+      return { failed };
+    }
+  }
+}
+
+function consumeSseBuffer(buffer, handlers) {
+  let splitIndex = buffer.indexOf('\n\n');
+  let remaining = buffer;
+  while (splitIndex !== -1) {
+    const rawEvent = remaining.slice(0, splitIndex).trim();
+    remaining = remaining.slice(splitIndex + 2);
+    if (rawEvent) {
+      handleSseEvent(rawEvent, handlers);
+    }
+    splitIndex = remaining.indexOf('\n\n');
+  }
+  return remaining;
+}
+
+function handleSseEvent(rawEvent, { onMeta, onStage, onChunk, onFailed, onDone }) {
+  let eventName = 'message';
+  const dataLines = [];
+  rawEvent.split('\n').forEach((line) => {
+    if (line.startsWith('event:')) {
+      eventName = line.slice(6).trim();
+      return;
+    }
+    if (line.startsWith('data:')) {
+      dataLines.push(line.slice(5).trim());
+    }
+  });
+  const payload = dataLines.length ? JSON.parse(dataLines.join('\n')) : {};
+  if (eventName === 'meta') {
+    onMeta?.(payload);
+    return;
+  }
+  if (eventName === 'stage') {
+    onStage?.(payload);
+    return;
+  }
+  if (eventName === 'chunk') {
+    onChunk?.(payload);
+    return;
+  }
+  if (eventName === 'failed') {
+    onFailed?.(payload);
+    return;
+  }
+  if (eventName === 'done') {
+    onDone?.(payload);
+  }
 }
 
 async function loadNodes() {
@@ -327,12 +657,13 @@ function closeOnEscape(event) {
 onMounted(() => {
   window.addEventListener('keydown', closeOnEscape);
   loadNodes();
-  refreshTimer = window.setInterval(refreshData, 30000);
+  refreshTimer = window.setInterval(refreshData, 10000);
 });
 
 onUnmounted(() => {
   window.removeEventListener('keydown', closeOnEscape);
   window.clearInterval(refreshTimer);
+  stopAgentRequest();
   stopAgentTimers();
 });
 </script>
@@ -576,7 +907,7 @@ onUnmounted(() => {
       <section class="log-result-panel">
         <div class="result-summary">
           <span>搜索结果</span>
-          <strong>{{ logCenterResults.length }} 条</strong>
+          <strong>{{ logCenterRecords.length }} 条</strong>
           <span class="result-scope">
             {{ logQueryMode === 'logId' ? `LogID = ${logIdQuery || '全部'}` : `machine_id = ${machineIdQuery || '全部'}` }}
           </span>
@@ -587,8 +918,8 @@ onUnmounted(() => {
           <span>机器ID</span>
           <span>IP</span>
         </div>
-        <div v-if="logCenterResults.length === 0" class="empty-state">暂无匹配日志</div>
-        <article v-for="log in logCenterResults" :key="log.id" class="log-result-item">
+        <div v-if="logCenterRecords.length === 0" class="empty-state">暂无匹配日志</div>
+        <article v-for="log in logCenterRecords" :key="log.id" class="log-result-item">
           <button class="log-result-meta" type="button" @click="toggleLogDetail(log.id)">
             <component :is="expandedLogIds.includes(log.id) ? ChevronDown : ChevronRight" :size="16" />
             <span class="log-psm">{{ log.logger }}</span>
@@ -598,6 +929,9 @@ onUnmounted(() => {
           </button>
           <div v-if="expandedLogIds.includes(log.id)" class="log-content">
             <span class="log-level" :class="log.level">{{ log.level }}</span>
+            <span v-if="log.sourceFilePath" class="log-source">
+              {{ log.sourceFilePath }}<template v-if="log.sourceLine">:{{ log.sourceLine }}</template>
+            </span>
             <code>logId={{ log.logId }} | {{ log.message }}</code>
           </div>
         </article>
@@ -661,7 +995,7 @@ onUnmounted(() => {
           <div class="agent-runtime">
             <label class="agent-model-select">
               <span>模型</span>
-              <select v-model="agentModelMode" :disabled="agentRunning">
+              <select v-model="agentModelMode" :disabled="agentRunning || Boolean(agentConversationId)">
                 <option value="auto">Auto</option>
                 <option value="deepseek-flash">deepseek-flash</option>
               </select>
@@ -682,14 +1016,52 @@ onUnmounted(() => {
             >
               <div class="agent-message-head">
                 <span>{{ message.role === 'user' ? '你' : '排障助手' }}</span>
-                <em>{{ message.machineIds.length ? `machineId=${message.machineIds.join(',')} · ` : '' }}{{ message.model }}</em>
+                <em>{{ agentScopeLabel(message) }}</em>
               </div>
-              <pre>{{ message.content }}</pre>
+              <div v-if="message.role === 'assistant' && message.steps?.length" class="agent-steps">
+                <button class="agent-steps-toggle" type="button" @click="toggleAgentSteps(message)">
+                  <component :is="message.stepsCollapsed ? ChevronRight : ChevronDown" :size="14" />
+                  <span>{{ agentStepsTitle(message) }}</span>
+                  <em>{{ message.steps.length }} 步</em>
+                </button>
+                <div v-if="!message.stepsCollapsed" class="agent-step-list">
+                  <div
+                    v-for="step in message.steps"
+                    :key="step.title"
+                    class="agent-step"
+                    :class="step.status"
+                  >
+                    <span class="agent-step-dot"></span>
+                    <div>
+                      <strong>{{ step.title }}</strong>
+                      <p>{{ step.detail }}</p>
+                    </div>
+                    <em>{{ agentStepStatusText(step.status) }}</em>
+                  </div>
+                </div>
+              </div>
+              <pre>{{ message.content }}<span v-if="message.streaming" class="stream-cursor">|</span></pre>
             </div>
           </div>
         </div>
-        <div class="modal-footer">
+        <div class="agent-input-row">
+          <input
+            v-model="agentInput"
+            class="agent-input"
+            type="text"
+            :disabled="agentRunning || !agentConversationId"
+            :placeholder="agentInputPlaceholder()"
+            @keyup.enter="sendAgentInput"
+          />
           <button class="btn btn-default" type="button" @click="closeAnalysis">关闭</button>
+          <button
+            class="btn btn-primary"
+            type="button"
+            :disabled="agentRunning || !agentConversationId || !agentInput.trim()"
+            @click="sendAgentInput"
+          >
+            发送
+          </button>
         </div>
       </div>
     </div>

@@ -1,6 +1,9 @@
 package com.GinElmaC.NettyServer.Agent;
 
 import com.GinElmaC.log.LogLevel;
+import com.GinElmaC.log.Log;
+import com.GinElmaC.log.LogContext;
+import com.GinElmaC.log.LogFactory;
 import com.GinElmaC.log.PushLogRecord;
 import com.GinElmaC.log.PushLogRepository;
 import com.GinElmaC.log.PushLogSearchParam;
@@ -17,6 +20,7 @@ public class QueryPushLogsByLogIdTool implements AgentTool {
     public static final String NAME = "query_push_logs_by_log_id";
     private static final int DEFAULT_LIMIT = 100;
     private static final int MAX_LIMIT = 100;
+    private static final Log log = LogFactory.getLog(QueryPushLogsByLogIdTool.class);
     private final PushLogRepository pushLogRepository = new PushLogRepository();
 
     @Override
@@ -48,10 +52,62 @@ public class QueryPushLogsByLogIdTool implements AgentTool {
                 .setKeyword(readText(arguments, "keyword"))
                 .setLimit(readLimit(arguments))
                 .setOffset(0);
-        List<LogAnalysisRecord> records = pushLogRepository.queryByLogId(param).stream()
-                .map(this::toAnalysisRecord)
-                .toList();
-        return JsonUtil.toJson(new LogQueryResult(request.requestedLogId(), records));
+        AgentTraceContext traceContext = request.traceContext();
+        long startedAtMillis = System.currentTimeMillis();
+        logQueryStarted(traceContext, param);
+        try {
+            List<LogAnalysisRecord> records = pushLogRepository.queryByLogId(param).stream()
+                    .map(this::toAnalysisRecord)
+                    .toList();
+            String result = JsonUtil.toJson(new LogQueryResult(request.requestedLogId(), records));
+            logQueryCompleted(traceContext, records.size(), result.length(), startedAtMillis);
+            return result;
+        } catch (Exception e) {
+            logQueryFailed(traceContext, startedAtMillis, e);
+            throw e;
+        }
+    }
+
+    private void logQueryStarted(AgentTraceContext traceContext, PushLogSearchParam param) {
+        if (traceContext == null) {
+            return;
+        }
+        LogContext context = traceContext.logContext()
+                .put("toolName", NAME)
+                .put("queryLogId", param.getLogId())
+                .put("queryLevel", param.getLevel() == null ? null : param.getLevel().getName())
+                .put("queryLimit", param.getLimit());
+        traceContext.putPayload(context, "queryKeyword", param.getKeyword());
+        log.Info(context, "AGENT_TOOL_PUSH_LOG_QUERY_STARTED");
+    }
+
+    private void logQueryCompleted(
+            AgentTraceContext traceContext,
+            int recordCount,
+            int resultLength,
+            long startedAtMillis
+    ) {
+        if (traceContext == null) {
+            return;
+        }
+        log.Info(traceContext.logContext()
+                        .put("toolName", NAME)
+                        .put("recordCount", recordCount)
+                        .put("resultLength", resultLength)
+                        .put("toolDurationMs", System.currentTimeMillis() - startedAtMillis),
+                "AGENT_TOOL_PUSH_LOG_QUERY_COMPLETED");
+    }
+
+    private void logQueryFailed(AgentTraceContext traceContext, long startedAtMillis, Exception error) {
+        if (traceContext == null) {
+            return;
+        }
+        log.Error(traceContext.logContext()
+                        .put("toolName", NAME)
+                        .put("toolDurationMs", System.currentTimeMillis() - startedAtMillis)
+                        .put("errorType", error.getClass().getSimpleName()),
+                "AGENT_TOOL_PUSH_LOG_QUERY_FAILED",
+                error);
     }
 
     private void validateLogId(JsonObject arguments, String requestedLogId) {
@@ -99,6 +155,8 @@ public class QueryPushLogsByLogIdTool implements AgentTool {
                 record.getMachineId(),
                 record.getHostIp(),
                 record.getLoggerName(),
+                record.getSourceFilePath(),
+                record.getSourceLine(),
                 truncate(record.getMessage(), 2_000),
                 truncate(record.getThrowable(), 4_000)
         );
@@ -120,6 +178,8 @@ public class QueryPushLogsByLogIdTool implements AgentTool {
             Integer machineId,
             String hostIp,
             String logger,
+            String sourceFilePath,
+            Integer sourceLine,
             String message,
             String throwable
     ) {

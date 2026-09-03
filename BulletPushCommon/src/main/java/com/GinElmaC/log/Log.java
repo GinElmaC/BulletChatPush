@@ -59,7 +59,10 @@ public class Log {
         Object[] formatArgs = throwable == null ? args : Arrays.copyOf(args, args.length - 1);
         String formatMessage = format(message, formatArgs);
         String stackTrace = throwable == null ? null : getStackTrace(throwable);
-        String contextJson = context == null || context.getExtra().isEmpty() ? null : JsonUtil.toJson(context.getExtra());
+        SourceLocation sourceLocation = resolveSourceLocation();
+        // 未显式传入 LogContext 的日志统一视为系统日志，复用当前进程的系统级 LogID。
+        LogContext effectiveContext = context == null ? LogRuntime.systemLogContext() : context;
+        String contextJson = effectiveContext.getExtra().isEmpty() ? null : JsonUtil.toJson(effectiveContext.getExtra());
 
         writeConsole(logTime, level, formatMessage, stackTrace);
         if (LogMysqlConfig.enabled()) {
@@ -72,15 +75,50 @@ public class Log {
                     LogRuntime.getHostIp(),
                     loggerName,
                     Thread.currentThread().getName(),
-                    context == null ? null : context.getTraceId(),
-                    context == null ? null : context.getMsgId(),
-                    context == null ? null : context.getUid(),
-                    context == null ? null : context.getRoomId(),
+                    sourceLocation.filePath(),
+                    sourceLocation.lineNumber(),
+                    effectiveContext.getTraceId(),
+                    effectiveContext.getMsgId(),
+                    effectiveContext.getUid(),
+                    effectiveContext.getRoomId(),
                     formatMessage,
                     stackTrace,
                     contextJson
             ));
         }
+    }
+
+    /**
+     * 从当前线程栈中找到第一个非日志组件自身的调用点。
+     * 这样业务侧无需手动传文件名和行号，所有 log.Info/Warn/Error 都能自动落调用位置。
+     */
+    private SourceLocation resolveSourceLocation() {
+        StackTraceElement[] stackTraceElements = Thread.currentThread().getStackTrace();
+        for (StackTraceElement element : stackTraceElements) {
+            if (element == null || isLogInternalClass(element.getClassName())) {
+                continue;
+            }
+            int lineNumber = element.getLineNumber();
+            return new SourceLocation(toSourcePath(element), lineNumber > 0 ? lineNumber : null);
+        }
+        return new SourceLocation(null, null);
+    }
+
+    private boolean isLogInternalClass(String className) {
+        return Thread.class.getName().equals(className)
+                || Log.class.getName().equals(className)
+                || LogFactory.class.getName().equals(className)
+                || LogRuntime.class.getName().equals(className)
+                || LogContext.class.getName().equals(className);
+    }
+
+    private String toSourcePath(StackTraceElement element) {
+        String className = element.getClassName();
+        int nestedClassIndex = className.indexOf('$');
+        if (nestedClassIndex > 0) {
+            className = className.substring(0, nestedClassIndex);
+        }
+        return className.replace('.', '/') + ".java";
     }
 
     private Throwable extractThrowable(Object[] args) {
@@ -142,5 +180,8 @@ public class Log {
         StringWriter stringWriter = new StringWriter();
         throwable.printStackTrace(new PrintWriter(stringWriter));
         return stringWriter.toString();
+    }
+
+    private record SourceLocation(String filePath, Integer lineNumber) {
     }
 }

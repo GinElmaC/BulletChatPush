@@ -60,7 +60,7 @@ function connect(endpoint) {
         messageId: response.messageId || '-',
         logId: response.logId || '-',
         status: response.type,
-        message: response.message
+        message: response.content || response.message
       });
     } catch {
       errorMessage.value = '消息节点返回了无法识别的数据';

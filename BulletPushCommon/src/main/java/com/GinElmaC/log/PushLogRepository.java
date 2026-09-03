@@ -86,6 +86,8 @@ public class PushLogRepository {
         record.setHostIp(resultSet.getString("host_ip"));
         record.setLoggerName(resultSet.getString("logger_name"));
         record.setThreadName(resultSet.getString("thread_name"));
+        record.setSourceFilePath(resultSet.getString("source_file_path"));
+        record.setSourceLine(resultSet.getObject("source_line", Integer.class));
         record.setTraceId(resultSet.getString("trace_id"));
         record.setMsgId(resultSet.getString("msg_id"));
         record.setUid(resultSet.getObject("uid", Long.class));

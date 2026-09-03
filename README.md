@@ -56,6 +56,15 @@ VITE_PUSH_ADMIN_API_BASE_URL=http://host:port/admin/api
 
 管理接口使用 JDK `HttpServer`，运行 Java 进程时需确保启用 `jdk.httpserver` 模块。
 
+Redis 配置：
+
+```bash
+# 默认连接 47.102.43.148:6379；若 Redis 开启认证，必须由部署环境提供密码。
+PUSH_REDIS_HOST=47.102.43.148
+PUSH_REDIS_PORT=6379
+PUSH_REDIS_PASSWORD=your-redis-password
+```
+
 用户 WebSocket 客户端：
 - 前端目录：`BulletPushUserClient`
 - Gateway 默认监听端口：`8082`，WebSocket 路径：`/ws`
@@ -71,6 +80,9 @@ PUSH_KAFKA_SECURITY_PROTOCOL=PLAINTEXT
 
 # 浏览器 WebSocket 上行消息写入此 Topic。
 PUSH_KAFKA_UPSTREAM_TOPIC=message_in
+# 所有推送节点共用该 Consumer Group，确保每条下行消息只由一个节点从 Kafka 获取。
+PUSH_KAFKA_DOWNSTREAM_TOPIC=message_out
+PUSH_KAFKA_DOWNSTREAM_CONSUMER_GROUP=push-message-out-consumer
 PUSH_WEBSOCKET_PORT=8082
 
 # 本地启动默认使用 ws://localhost:8082/ws；多节点部署时覆盖为真实节点列表。
@@ -80,8 +92,33 @@ PUSH_WEBSOCKET_NODE_ENDPOINTS=ws://10.0.1.101:8082/ws,ws://10.0.1.102:8082/ws
 以上 Kafka 参数已作为 Gateway 默认值写入代码；环境变量或 JVM 参数
 `push.kafka.bootstrapServers`、`push.kafka.securityProtocol`、`push.kafka.upstreamTopic`
 可在不同环境中覆盖。未配置 `PUSH_WEBSOCKET_NODE_ENDPOINTS` 时，Gateway 默认对外公布
-`ws://localhost:8082/ws`。业务服务应消费 `message_in`，处理后写入 `message_out`；
-`message_out` 的中台共享消费者组和房间路由将在下行转发链路中接入。
+`ws://localhost:8082/ws`。
+
+下行路由：
+- 推送节点消费 `message_out` 时共用 `push-message-out-consumer`，一条消息只由一个节点消费。
+- WebSocket 客户端首次向房间发送消息时，推送节点将该房间成员与节点租约登记到 Redis。
+- 消费节点在本机有该房间连接时直接广播；目标在其他节点时发布到对应机器的 Redis 专属频道。
+- 目标节点收到专属频道消息后向本机房间连接发送 `MESSAGE_DELIVERED`。
+- 房间节点租约默认 90 秒，每 30 秒续租，可通过 `PUSH_ROOM_ROUTE_LEASE_SECONDS`、
+  `PUSH_ROOM_ROUTE_REFRESH_SECONDS` 调整。
+
+业务 Service：
+- 模块：`BulletPushService`
+- 启动入口：`com.GinElmaC.PushServiceStart`
+- 所有 Service 实例使用 Consumer Group `push-business-service` 消费 `message_in`
+- 当前处理器仅打印消息，并在 Kafka 确认写入后将原始消息体写入 `message_out`
+- 写入失败时不提交 `message_in` offset，消息会按至少一次语义重试
+
+业务 Service Kafka 配置：
+
+```bash
+PUSH_KAFKA_BOOTSTRAP_SERVERS=47.102.43.148:9092
+PUSH_KAFKA_SECURITY_PROTOCOL=PLAINTEXT
+PUSH_KAFKA_INPUT_TOPIC=message_in
+PUSH_KAFKA_OUTPUT_TOPIC=message_out
+PUSH_KAFKA_BUSINESS_CONSUMER_GROUP=push-business-service
+```
+
 
 用户前端需要使用其他管理接口地址时，配置：
 

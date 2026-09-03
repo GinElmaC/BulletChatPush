@@ -1,6 +1,7 @@
 package com.GinElmaC.NettyServer.Handler;
 
 import com.GinElmaC.NettyServer.Service.KafkaUpstreamMessageProducer;
+import com.GinElmaC.NettyServer.Service.RoomMessageDeliveryService;
 import com.GinElmaC.log.Log;
 import com.GinElmaC.log.LogContext;
 import com.GinElmaC.log.LogFactory;
@@ -21,9 +22,14 @@ import java.time.LocalDateTime;
 public class WebSocketGatewayHandler extends SimpleChannelInboundHandler<TextWebSocketFrame> {
     private static final Log log = LogFactory.getLog(WebSocketGatewayHandler.class);
     private final KafkaUpstreamMessageProducer kafkaProducer;
+    private final RoomMessageDeliveryService deliveryService;
 
-    public WebSocketGatewayHandler(KafkaUpstreamMessageProducer kafkaProducer) {
+    public WebSocketGatewayHandler(
+            KafkaUpstreamMessageProducer kafkaProducer,
+            RoomMessageDeliveryService deliveryService
+    ) {
         this.kafkaProducer = kafkaProducer;
+        this.deliveryService = deliveryService;
     }
 
     @Override
@@ -44,6 +50,8 @@ public class WebSocketGatewayHandler extends SimpleChannelInboundHandler<TextWeb
                     .put("remoteAddress", String.valueOf(ctx.channel().remoteAddress()))
                     .put("contentLength", content.length());
             log.Info(logContext, "WEBSOCKET_MESSAGE_RECEIVED");
+            // 注册房间本机连接并刷新 Redis 节点租约，确保后续 message_out 可路由回该连接所在节点。
+            deliveryService.registerClientRoom(roomId, ctx.channel());
 
             GatewayUpstreamMessage message = new GatewayUpstreamMessage(
                     logId,
@@ -80,6 +88,8 @@ public class WebSocketGatewayHandler extends SimpleChannelInboundHandler<TextWeb
 
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+        // 本机房间已经没有连接时才从 Redis 移除本机成员，其他节点房间成员不受影响。
+        deliveryService.unregisterClient(ctx.channel());
         log.Info(connectionLogContext(ctx), "WEBSOCKET_CHANNEL_INACTIVE");
         super.channelInactive(ctx);
     }

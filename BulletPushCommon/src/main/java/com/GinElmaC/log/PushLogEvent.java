@@ -11,6 +11,8 @@ public class PushLogEvent {
     private final String hostIp;
     private final String loggerName;
     private final String threadName;
+    private final String sourceFilePath;
+    private final Integer sourceLine;
     private final String traceId;
     private final String msgId;
     private final Long uid;
@@ -21,8 +23,8 @@ public class PushLogEvent {
 
     public PushLogEvent(LocalDateTime logTime, LogLevel level, String serverName, Integer machineId,
                         String nodeName, String hostIp, String loggerName, String threadName,
-                        String traceId, String msgId, Long uid, Long roomId, String message,
-                        String throwable, String contextJson) {
+                        String sourceFilePath, Integer sourceLine, String traceId, String msgId,
+                        Long uid, Long roomId, String message, String throwable, String contextJson) {
         this.logTime = logTime;
         this.level = level;
         this.serverName = serverName;
@@ -31,6 +33,8 @@ public class PushLogEvent {
         this.hostIp = hostIp;
         this.loggerName = loggerName;
         this.threadName = threadName;
+        this.sourceFilePath = sourceFilePath;
+        this.sourceLine = sourceLine;
         this.traceId = traceId;
         this.msgId = msgId;
         this.uid = uid;
@@ -70,6 +74,14 @@ public class PushLogEvent {
 
     public String getThreadName() {
         return threadName;
+    }
+
+    public String getSourceFilePath() {
+        return sourceFilePath;
+    }
+
+    public Integer getSourceLine() {
+        return sourceLine;
     }
 
     public String getTraceId() {

@@ -1,10 +1,20 @@
 package com.GinElmaC.NettyServer.Agent;
 
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Properties;
+
 /**
  * Agent 模型配置。
- * 配置优先级：JVM 参数 > 环境变量 > 代码默认值。
+ * 配置优先级：JVM 参数 > 环境变量 > 本地忽略配置文件 > 代码默认值。
  */
 public class AgentModelConfig {
+    private static final Path LOCAL_CONFIG_PATH = Path.of(
+            System.getProperty("push.local.config", "config/local.properties")
+    );
+    private static final Properties LOCAL_PROPERTIES = loadLocalProperties();
+
     // OpenAI-compatible 模型网关根地址或 chat/completions 完整地址。
     public static final String BASE_URL = readConfig("push.agent.model.baseUrl", "PUSH_AGENT_MODEL_BASE_URL");
     // 模型网关鉴权密钥。
@@ -41,6 +51,10 @@ public class AgentModelConfig {
             return value;
         }
         value = System.getenv(envName);
+        if (hasText(value)) {
+            return value;
+        }
+        value = LOCAL_PROPERTIES.getProperty(propertyName);
         return hasText(value) ? value : defaultValue;
     }
 
@@ -58,5 +72,21 @@ public class AgentModelConfig {
 
     private static boolean hasText(String value) {
         return value != null && !value.trim().isEmpty();
+    }
+
+    /**
+     * local.properties 仅用于本地启动，文件被 Git 忽略，避免 LLM 密钥进入版本库。
+     */
+    private static Properties loadLocalProperties() {
+        Properties properties = new Properties();
+        if (!Files.isRegularFile(LOCAL_CONFIG_PATH)) {
+            return properties;
+        }
+        try (InputStream inputStream = Files.newInputStream(LOCAL_CONFIG_PATH)) {
+            properties.load(inputStream);
+            return properties;
+        } catch (Exception e) {
+            throw new IllegalStateException("load local agent config failed", e);
+        }
     }
 }

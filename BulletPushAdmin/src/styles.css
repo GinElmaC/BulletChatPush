@@ -485,6 +485,11 @@ button {
   color: #f53f3f;
 }
 
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 .select,
 .search-input {
   height: 32px;
@@ -958,6 +963,96 @@ button {
   word-break: break-word;
 }
 
+.agent-steps {
+  margin: 0 0 10px;
+  border: 1px solid #e5e6eb;
+  border-radius: 6px;
+  background: #f7f8fa;
+  overflow: hidden;
+}
+
+.agent-steps-toggle {
+  width: 100%;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 0;
+  color: #1f2329;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+  text-align: left;
+}
+
+.agent-steps-toggle em {
+  margin-left: auto;
+  color: #86909c;
+  font-style: normal;
+  font-weight: 400;
+}
+
+.agent-step-list {
+  display: grid;
+  gap: 0;
+  border-top: 1px solid #e5e6eb;
+}
+
+.agent-step {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 9px;
+  padding: 9px 10px;
+  color: #4e5969;
+  font-size: 12px;
+}
+
+.agent-step + .agent-step {
+  border-top: 1px solid #f2f3f5;
+}
+
+.agent-step-dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: #165dff;
+}
+
+.agent-step.running .agent-step-dot {
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.agent-step.completed .agent-step-dot {
+  background: #00b42a;
+}
+
+.agent-step.failed .agent-step-dot {
+  background: #f53f3f;
+}
+
+.agent-step strong {
+  display: block;
+  color: #1f2329;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.agent-step p {
+  margin: 3px 0 0;
+  color: #86909c;
+  line-height: 1.45;
+}
+
+.agent-step em {
+  color: #86909c;
+  font-style: normal;
+  white-space: nowrap;
+}
+
 .stream-cursor {
   color: #165dff;
   animation: blink 0.9s step-end infinite;
@@ -977,10 +1072,15 @@ button {
   padding: 0 12px;
   border: 1px solid #e5e6eb;
   border-radius: 4px;
-  color: #86909c;
+  color: #1f2329;
   background: #f7f8fa;
   outline: none;
   font-size: 13px;
+}
+
+.agent-input:disabled {
+  color: #86909c;
+  background: #f2f3f5;
 }
 
 @keyframes blink {
@@ -1285,6 +1385,16 @@ button {
 .log-content code {
   flex: 1;
   color: #4e5969;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.log-source {
+  max-width: 260px;
+  flex-shrink: 0;
+  color: #86909c;
   font-family: "SF Mono", Monaco, Consolas, monospace;
   font-size: 12px;
   line-height: 1.7;
